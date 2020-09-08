@@ -19,28 +19,40 @@ lazy val configSettings: Seq[Setting[_]] = Seq(
   }
 )
 
+// Common Settings //
+
+lazy val commonSettings = List(
+  scalacOptions ++= {
+    val opts =
+      if (isDotty.value)
+        "-language:Scala2"
+      else
+        // Compiler team advised avoiding the -Xsource:2.14 option for releases.
+        // The output with -Xsource should be periodically checked, though.
+        "-deprecation:false -feature -Xlint:-stars-align,-nullary-unit,_"
+    opts.split("\\s+").to[Seq]
+  },
+  scalacOptions in Test  += "-Xxml:coalescing",
+)
+
+// Root Project //
+
+lazy val root = (project in file(".")).settings(
+  name := "scala-xml-root",
+  publish / skip := true
+).disablePlugins(MimaPlugin).aggregate(xml.jvm, xml.js, `xml-scalacheck`)
+
+// Projects //
 
 lazy val xml = crossProject(JSPlatform, JVMPlatform)
   .withoutSuffixFor(JVMPlatform)
   .crossType(CrossType.Full)
-  .in(file("."))
+  .in(file("xml"))
+  .settings(commonSettings)
   .settings(ScalaModulePlugin.scalaModuleSettings)
   .jvmSettings(ScalaModulePlugin.scalaModuleOsgiSettings)
   .settings(
     name    := "scala-xml",
-
-    scalacOptions ++= {
-      val opts =
-        if (isDotty.value)
-          "-language:Scala2"
-        else
-          // Compiler team advised avoiding the -Xsource:2.14 option for releases.
-          // The output with -Xsource should be periodically checked, though.
-          "-deprecation:false -feature -Xlint:-stars-align,-nullary-unit,_"
-      opts.split("\\s+").to[Seq]
-    },
-
-    scalacOptions in Test  += "-Xxml:coalescing",
 
     scalaModuleMimaPreviousVersion := {
       if (isDotty.value) None // No such release yet
@@ -168,3 +180,11 @@ lazy val xml = crossProject(JSPlatform, JVMPlatform)
     fork in Test := false
   )
   .jsConfigure(_.enablePlugins(ScalaJSJUnitPlugin))
+
+lazy val `xml-scalacheck` = project.settings(commonSettings).settings(
+  name := "scala-xml-scalacheck",
+  publish / skip := true,
+  libraryDependencies ++= List(
+    "org.scalacheck" %% "scalacheck" % "1.14.3"
+  )
+).dependsOn(xml.jvm)
