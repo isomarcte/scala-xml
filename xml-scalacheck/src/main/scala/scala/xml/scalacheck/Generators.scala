@@ -1,7 +1,6 @@
 package scala.xml.scalacheck
 
 import org.scalacheck._
-import scala.xml._
 
 trait Generators {
 
@@ -45,6 +44,15 @@ trait Generators {
     )
   }
 
+  lazy val xmlRestrictedChars: Set[Char] =
+    (
+      (0x1 to 0x8).toSet ++
+        (0xB to 0xC).toSet ++
+        (0xE to 0x1F).toSet ++
+        (0x7F to 0x84).toSet
+        (0x86 to 0x9F).toSet
+    ).map(_.toChar)
+
   /** Generate a valid XML `Char`.
     *
     * From the specification, "any Unicode character, excluding the surrogate blocks, FFFE, and FFFF.""
@@ -64,7 +72,7 @@ trait Generators {
     * @see [[https://www.w3.org/TR/xml11//#NT-RestrictedChar]]
     */
   lazy val xmlRestrictedCharGen: Gen[Char] =
-    evenDistribution((0x1, 0x8), List((0xB, 0xC), (0xE, 0x1F), (0x7F, 0x84), (0x86, 0x9F))).map(_.toChar)
+    Gen.oneOf(xmlRestrictedChars)
 
   /** Generate a valid XML White Space Character.
     *
@@ -83,6 +91,12 @@ trait Generators {
     */
   lazy val xmlWhiteSpaceGen: Gen[String] =
     Gen.nonEmptyListOf(xmlWhiteSpaceCharGen).map(_.mkString)
+
+  /** Generates a valid XML whitespace string or the empty string with a 50%
+    * probability to each outcome.
+    */
+  lazy val xmlMaybeWhiteSpaceGen: Gen[String] =
+    Gen.oneOf(Gen.const(""), xmlWhiteSpaceGen)
 
   /** Generate a valid `NameStartChar`.
     *
@@ -981,7 +995,194 @@ trait Generators {
       )
     )
 
+  /** Generate a valid `conditionalSect`.
+    *
+    * conditionalSect ::= includeSect | ignoreSect
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-conditionalSect]]
+    */
+  lazy val xmlConditionalSectGen: Gen[String] =
+    Gen.oneOf(xmlIncludeSectGen, xmlIgnoreSectGen)
 
+  /** Generate a valid `includeSect`.
+    *
+    * includeSect ::= '<![' S? 'INCLUDE' S? '[' extSubsetDecl ']]>'
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-includeSect]]
+    */
+  lazy val xmlIncludeSectGen: Gen[String] = ???
+
+  /** Generate a valid `ignoreSect`.
+    *
+    * ignoreSect ::= '<![' S? 'IGNORE' S? '[' ignoreSectContents* ']]>'
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-ignoreSect]]
+    */
+  lazy val xmlIgnoreSectGen: Gen[String] =
+    for {
+      s0 <- xmlMaybeWhiteSpaceGen
+      s1 <- xmlMaybeWhiteSpaceGen
+      isc <- Gen.listOf(xmlIgnoreSectContentsGen)
+    } yield s"<![${s0}IGNORE${s1}[${isc.mkString}]]>"
+
+  /** Generate a valid `ignoreSectContents`.
+    *
+    * ignoreSectContents ::= Ignore ('<![' ignoreSectContents ']]>' Ignore)*
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-ignoreSectContents]]
+    */
+  lazy val xmlIgnoreSectContentsGen: Gen[String] = {
+    val internalGen: Gen[String] =
+      for {
+        isc <- xmlIgnoreSectContentsGen
+        ignore <- xmlIgnoreGen
+      } yield s"<![${isc}]]>${ignore}"
+
+      xmlIgnoreGen.flatMap(ignore =>
+        Gen.listOf(
+          internalGen
+        ).map(internal =>
+          s"${ignore}${internal.mkString}"
+        )
+      )
+  }
+
+  /** Generate a valid `Ignore`.
+    *
+    * Ignore ::= Char* - (Char* ('<![' | ']]>') Char*)
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-Ignore]]
+    */
+  lazy val xmlIgnoreGen: Gen[String] =
+    Gen.listOf(xmlCharGen).map(_.mkString).filterNot(value =>
+      value.contains("<![") || value.contains("]]>")
+    )
+
+  /** Generate a valid `EntityDecl`.
+    *
+    * EntityDecl ::= GEDecl | PEDecl
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-EntityDecl]]
+    */
+  lazy val xmlEntityDeclGen: Gen[String] = ???
+
+  /** Generate a valid `GEDecl`.
+    *
+    * GEDecl ::= '<!ENTITY' S Name S EntityDef S? '>'
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-GEDecl]]
+    */
+  lazy val xmlGEDeclGen: Gen[String] = ???
+
+  /** Generate a valid `PEDecl`.
+    *
+    * PEDecl ::= '<!ENTITY' S '%' S Name S PEDef S? '>'
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-PEDecl]]
+    */
+  lazy val xmlPEDeclGen: Gen[String] = ???
+
+  /** Generate a valid `EntityDef`.
+    *
+    * EntityDef ::= EntityValue | (ExternalID NDataDecl?)
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-EntityDef]]
+    */
+  lazy val xmlEntityDefGen: Gen[String] = ???
+
+  /** Generate a valid `PEDef`.
+    *
+    * PEDef ::= EntityValue | ExternalID
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-PEDef]]
+    */
+  lazy val xmlPEDefGen: Gen[String] = ???
+
+  /** Generate a valid `ExternalID`.
+    *
+    * ExternalID ::= 'SYSTEM' S SystemLiteral | 'PUBLIC' S PubidLiteral S SystemLiteral
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-ExternalID]]
+    */
+  lazy val xmlExternalIdGen: Gen[String] = {
+    val firstGen: Gen[String] =
+      for {
+        s <- xmlWhiteSpaceGen
+        sl <- xmlSystemLiteralGen
+      } yield s"SYSTEM${s}${sl}"
+    val secondGen: Gen[String] =
+      for {
+        s0 <- xmlWhiteSpaceGen
+        pl <- xmlPubidLiteralGen
+        s1 <- xmlWhiteSpaceGen
+        sl <- xmlSystemLiteralGen
+      } yield s"PUBLIC${s0}${pl}${s1}${sl}"
+  }
+
+  /** Generate a valid `NDataDecl`.
+    *
+    * NDataDecl ::= S 'NDATA' S Name
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-NDataDecl]]
+    */
+  lazy val xmlNDataDeclGen: Gen[String] =
+    for {
+      s0 <- xmlWhiteSpaceGen
+      s1 <- xmlWhiteSpaceGen
+      n <- xmlNameGen
+    } yield s"${s0}NDATA${s1}${n}"
+
+  /** Generate a valid `TextDecl`.
+    *
+    * TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-TextDecl]]
+    */
+  lazy val xmlTextDeclGen: Gen[String] = ???
+
+  /** Generate a valid `extParsedEnt`.
+    *
+    * extParsedEnt ::= ( TextDecl? content ) - ( Char* RestrictedChar Char* )
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-extParsedEnt]]
+    */
+  lazy val xmlExtParsedEntGen: Gen[String] =
+    (for {
+      textDecl <- Gen.oneOf(Gen.const(""), xmlTextDeclGen)
+      content <- xmlContentGen
+    } yield s"${textDecl}${content}").filter(value =>
+      value.toSet.intersect(xmlRestrictedChars).isEmpty
+    )
+
+  /** Generate a valid `EncodingDecl`.
+    *
+    * EncodingDecl ::= S 'encoding' Eq ('"' EncName '"' | "'" EncName "'" )
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-EncodingDecl]]
+    */
+  lazy val xmlEncodingDeclGen: Gen[String] = ???
+
+  /** Generate a valid `EncName`.
+    *
+    * EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-EncName]]
+    */
+  lazy val xmlEncNameGen: Gen[String] = {
+    lazy val epilogue: Gen[String] =
+      Gen.oneOf(
+        evenDistribution(
+          ('A'.toInt, 'Z'.toInt),
+          List(
+            ('a'.toInt, 'z'.toInt),
+            ('0'.toInt, '9'.toInt),
+            ('.'.toInt, '.'.toInt),
+            ('_'.toInt, '_'.toInt)
+          )
+        ).map(_.toChar),
+        Gen.const('-')
+      )
+  }
 }
 
 object Generators extends Generators
