@@ -1,8 +1,14 @@
 package scala.xml.scalacheck
 
+import java.util.regex.Pattern
 import org.scalacheck._
 
 trait Generators {
+
+  def recursiveStep[A](value: Gen[A]): Gen[A] =
+    Gen.sized(i =>
+      Gen.resize(i - (i.toDouble/10D).toInt, value)
+    )
 
   private def weight(size: Int, minSize: Int, totalSize: Int): Int = {
     val totalSizeBD: BigDecimal = BigDecimal(totalSize)
@@ -49,9 +55,14 @@ trait Generators {
       (0x1 to 0x8).toSet ++
         (0xB to 0xC).toSet ++
         (0xE to 0x1F).toSet ++
-        (0x7F to 0x84).toSet
+        (0x7F to 0x84).toSet ++
         (0x86 to 0x9F).toSet
     ).map(_.toChar)
+
+  lazy val xmlChars: Set[Char] =
+    ((0x1 to 0xD7FF).toSet ++
+    (0xE000 to 0xFFFD).toSet ++
+    (0x10000 to 0x10FFFF).toSet).map(_.toChar)
 
   /** Generate a valid XML `Char`.
     *
@@ -62,7 +73,7 @@ trait Generators {
     * @see [[https://www.w3.org/TR/xml11//#NT-Char]]
     */
   lazy val xmlCharGen: Gen[Char] =
-    evenDistribution((0x1, 0xD7FF), List((0xE000, 0xFFFD), (0x10000, 0x10FFFF))).map(_.toChar)
+    Gen.oneOf(xmlChars)
 
   /** Generate a valid XML `RestrictedChar`.
     *
@@ -151,11 +162,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Name]]
     */
-  lazy val xmlNameGen: Gen[String] =
+  lazy val xmlNameGen: Gen[String] = recursiveStep(
     for {
       nameStartChar <- xmlNameStartCharGen
       nameChars <- Gen.listOf(xmlNameCharGen).map(_.mkString)
     } yield nameStartChar.toString ++ nameChars
+  )
 
   /** Generate a valid `Names`.
     *
@@ -163,11 +175,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Names]]
     */
-  lazy val xmlNamesGen: Gen[String] =
+  lazy val xmlNamesGen: Gen[String] = recursiveStep(
     for {
       firstName <- xmlNameGen
       rest <- Gen.listOf(xmlNameGen.map(name => s" ${name}")).map(_.mkString)
     } yield firstName ++ rest
+  )
 
   /** Generate a valid `Nmtoken`.
     *
@@ -175,8 +188,9 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Nmtoken]]
     */
-  lazy val xmlNmtokenGen: Gen[String] =
+  lazy val xmlNmtokenGen: Gen[String] = recursiveStep(
     Gen.nonEmptyListOf(xmlNameCharGen).map(_.mkString)
+  )
 
   /** Generate a valid `Nmtokens`.
     *
@@ -184,11 +198,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Nmtokens]]
     */
-  lazy val xmlNmtokensGen: Gen[String] =
+  lazy val xmlNmtokensGen: Gen[String] = recursiveStep(
     for {
       first <- xmlNmtokenGen
       rest <- Gen.listOf(xmlNmtokenGen.map(nmtoken => s" ${nmtoken}")).map(_.mkString)
     } yield first ++ rest
+  )
 
   /** Generate a valid `Eq`.
     *
@@ -196,11 +211,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Eq]]
     */
-  lazy val xmlEqGen: Gen[String] =
+  lazy val xmlEqGen: Gen[String] = recursiveStep(
     for {
       prefixSpace <- Gen.oneOf("", " ")
       suffixSpace <- Gen.oneOf("", " ")
     } yield s"${prefixSpace}=${suffixSpace}"
+  )
 
   /** Generate a valid `EntityRef`.
     *
@@ -208,8 +224,9 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-EntityRef]]
     */
-  lazy val xmlEntityRefStringGen: Gen[String] =
+  lazy val xmlEntityRefStringGen: Gen[String] = recursiveStep(
     xmlNameGen.map(name => s"&${name};")
+  )
 
   /** Generate a valid `CharRef`.
     *
@@ -217,7 +234,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-CharRef]]
     */
-  lazy val xmlCharRefStringGen: Gen[String] =
+  lazy val xmlCharRefStringGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       Gen.nonEmptyListOf(Gen.numChar).map(value =>
         s"&#${value.mkString};"
@@ -228,6 +245,7 @@ trait Generators {
         s"&#x${value.mkString};"
       )
     )
+  )
 
   /** Generate a valid `Reference`.
     *
@@ -235,11 +253,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Reference]]
     */
-  lazy val xmlReferenceGen: Gen[String] =
+  lazy val xmlReferenceGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       xmlEntityRefStringGen,
       xmlCharRefStringGen
     )
+  )
 
   /** Generate a valid `Reference`.
     *
@@ -247,8 +266,9 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-PEReference]]
     */
-  lazy val xmlPEReferenceGen: Gen[String] =
+  lazy val xmlPEReferenceGen: Gen[String] = recursiveStep(
     xmlNameGen.map(value => s"%${value};")
+  )
 
   /** Generate a valid `AttValue`.
     *
@@ -257,13 +277,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-AttValue]]
     */
-  lazy val xmlAttValueGen: Gen[String] = {
+  lazy val xmlAttValueGen: Gen[String] = recursiveStep{
     def common(delimiter: Char): Gen[String] = {
       val invalid: Set[Char] =
         Set(delimiter, '^', '<', '&')
       Gen.listOf(
         Gen.oneOf(
-          xmlCharGen.filterNot(value => invalid.contains(value)).map(_.toString),
+          Gen.oneOf(xmlChars -- invalid).map(_.toString),
           xmlReferenceGen
         )
       ).map(value => s"${delimiter}${value.mkString}${delimiter}")
@@ -281,13 +301,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-EntityValue]]
     */
-  lazy val xmlEntityValueGen: Gen[String] = {
+  lazy val xmlEntityValueGen: Gen[String] = recursiveStep{
     def common(delimiter: Char): Gen[String] = {
       val invalid: Set[Char] =
         Set(delimiter, '^', '%', '&')
       Gen.listOf(
         Gen.oneOf(
-          xmlCharGen.filterNot(value => invalid.contains(value)).map(_.toString),
+          Gen.oneOf(xmlChars -- invalid).map(_.toString),
           xmlPEReferenceGen,
           xmlReferenceGen
         )
@@ -306,9 +326,9 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-SystemLiteral]]
     */
-  lazy val xmlSystemLiteralGen: Gen[String] = {
+  lazy val xmlSystemLiteralGen: Gen[String] = recursiveStep{
     def common(delimiter: Char): Gen[String] =
-      Gen.listOf(xmlCharGen.filterNot(_ == delimiter)).map(value =>
+      Gen.listOf(Gen.oneOf(xmlChars -- Set(delimiter))).map(value =>
         s"${delimiter}${value.mkString}${delimiter}"
       )
 
@@ -318,6 +338,15 @@ trait Generators {
     )
   }
 
+  lazy val xmlPubidChars: Set[Char] =
+    ((0x20 to 0x20).toSet ++
+      (0xD to 0xD).toSet ++
+      (0xA to 0xA).toSet ++
+      ('a'.toInt to 'z'.toInt).toSet ++
+      ('A'.toInt to 'Z'.toInt).toSet ++
+      ('0'.toInt to '9'.toInt).toSet
+    ).map(_.toChar) ++ Set('-', '\'', '(', ')', '+', ',', '.', '/', ':', '=', '?', ';', '!', '*', '#', '@', '$', '_', '%')
+
   /** Generate a valid `PubidChar`
     *
     * PubidChar ::= #x20 | #xD | #xA | [a-zA-Z0-9] | [-'()+,./:=?;!*#@$_%]
@@ -325,17 +354,7 @@ trait Generators {
     * @see [[https://www.w3.org/TR/xml11//#NT-PubidChar]]
     */
   lazy val xmlPubidCharGen: Gen[Char] =
-    evenDistribution(
-      (0x20, 0x20),
-      List(
-        (0xD, 0xD),
-        (0xA, 0xA),
-        ('a'.toInt, 'z'.toInt),
-        ('A'.toInt, 'Z'.toInt),
-        ('0'.toInt, '9'.toInt)
-      ) ++
-        List('-', '\'', '(', ')', '+', ',', '.', '/', ':', '=', '?', ';', '!', '*', '#', '@', '$', '_', '%').map(char => (char.toInt, char.toInt))
-    ).map(_.toChar)
+    Gen.oneOf(xmlPubidChars)
 
   /** Generate a valid `PubidLiteral`.
     *
@@ -343,12 +362,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-PubidLiteral]]
     */
-  lazy val xmlPubidLiteralGen: Gen[String] = {
+  lazy val xmlPubidLiteralGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       Gen.listOf(xmlPubidCharGen).map(value => s""""${value.mkString}""""),
-      Gen.listOf(xmlPubidCharGen.filterNot(_ == '\'')).map(value => s"'${value.mkString}'")
+      Gen.listOf(Gen.oneOf(xmlPubidChars -- Set('\''))).map(value => s"'${value.mkString}'")
     )
-  }
+  )
 
   /** Generate a valid `CharData`.
     *
@@ -356,10 +375,10 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-CharData]]
     */
-  lazy val xmlCharDataGen: Gen[String] = {
+  lazy val xmlCharDataGen: Gen[String] = recursiveStep{
     val invalid: Set[Char] =
       Set('^', '<', '&')
-    Gen.listOf(xmlCharGen.filterNot(invalid.contains(_))).map(_.mkString).filterNot(_.contains("]]>"))
+    Gen.listOf(Gen.oneOf(xmlChars -- invalid)).map(_.mkString).map(_.replace("]]>", "[[<"))
   }
 
   /** Generate a valid `Comment`.
@@ -368,15 +387,15 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Comment]]
     */
-  lazy val xmlCommentGen: Gen[String] = {
+  lazy val xmlCommentGen: Gen[String] = recursiveStep{
     val minusDash: Gen[String] =
-      xmlCharGen.filterNot(_ == '-').map(_.toString)
+      Gen.oneOf(xmlChars -- Set('-')).map(_.toString)
     Gen.listOf(
       Gen.oneOf(
         minusDash,
         minusDash.map(value => s"-${value}")
       )
-    ).map(value => s"<!--${value}-->")
+    ).map(value => s"<!--${value.mkString}-->")
   }
 
   /** Generate a valid `PITarget`.
@@ -385,10 +404,15 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-PITarget]]
     */
-  lazy val xmlPITargetGen: Gen[String] =
-    xmlNameGen.filterNot(
-      _.matches("""[xX][mM][lL]""")
+  lazy val xmlPITargetGen: Gen[String] = {
+    lazy val pattern: Pattern =
+      Pattern.compile("""[xX][mM][lL]""")
+    recursiveStep(
+      xmlNameGen.map(value =>
+        pattern.matcher(value).replaceAll("abc")
+      )
     )
+  }
 
   /** Generate a valid `PI`.
     *
@@ -396,12 +420,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-PI]]
     */
-  lazy val xmlPIGen: Gen[String] = {
+  lazy val xmlPIGen: Gen[String] = recursiveStep{
     val restGen: Gen[String] =
       Gen.oneOf(
         for {
           s <- xmlWhiteSpaceGen
-          c <- Gen.listOf(xmlCharGen).map(_.mkString).filterNot(_.contains("?>"))
+          c <- Gen.listOf(xmlCharGen).map(_.mkString).map(_.replace("?>", "ab"))
         } yield s"${s}${c}",
         Gen.const("")
       )
@@ -435,8 +459,9 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-CData]]
     */
-  lazy val xmlCDataGen: Gen[String] =
-    Gen.listOf(xmlCharGen).map(_.mkString).filterNot(_.contains("]]>"))
+  lazy val xmlCDataGen: Gen[String] = recursiveStep(
+    Gen.listOf(xmlCharGen).map(_.mkString).map(_.replace("]]>", "abc"))
+  )
 
   /** Generate a valid `CDSect`.
     *
@@ -444,12 +469,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-CDSect]]
     */
-  lazy val xmlCDSectGen: Gen[String] =
+  lazy val xmlCDSectGen: Gen[String] = recursiveStep(
     for {
       cdstart <- xmlCDStartGen
       cdata <- xmlCDataGen
       cdend <- xmlCDEndGen
     } yield s"${cdstart}${cdata}${cdend}"
+  )
 
   /** Generate a valid `VersionNum`.
     *
@@ -466,12 +492,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Misc]]
     */
-  lazy val xmlMiscGen: Gen[String] =
+  lazy val xmlMiscGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       xmlCommentGen,
       xmlPIGen,
       xmlWhiteSpaceGen
     )
+  )
 
   /** Generate a valid `VersionInfo`.
     *
@@ -479,7 +506,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-VersionInfo]]
     */
-  lazy val xmlVersionInfoGen: Gen[String] = {
+  lazy val xmlVersionInfoGen: Gen[String] = recursiveStep{
     val restGen: Gen[String] =
       Gen.oneOf(
         xmlVersionNumGen.map(value => s"'${value}'"),
@@ -498,7 +525,14 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-XMLDecl]]
     */
-  lazy val xmlXMLDeclGen: Gen[String] = ???
+  lazy val xmlXMLDeclGen: Gen[String] = recursiveStep(
+    for {
+      v <- xmlVersionInfoGen
+      e <- Gen.oneOf(Gen.const(""), xmlEncodingDeclGen)
+      sd <- Gen.oneOf(Gen.const(""), xmlSDDeclGen)
+      s <- xmlMaybeWhiteSpaceGen
+    } yield s"<?xml${v}${e}${sd}${s}?>"
+  )
 
   /** Generate a valid `prolog`.
     *
@@ -506,7 +540,19 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-prolog]]
     */
-  lazy val xmlPrologGen: Gen[String] = ???
+  lazy val xmlPrologGen: Gen[String] = recursiveStep{
+    val misc: Gen[String] = Gen.listOf(xmlMiscGen).map(_.mkString)
+    val epilogue: Gen[String] =
+      for {
+        d <- xmlDoctypedeclGen
+        m <- misc
+      } yield s"${d}${m}"
+    for {
+      x <- xmlXMLDeclGen
+      m <- misc
+      e <- Gen.oneOf(Gen.const(""), epilogue)
+    } yield s"${x}${m}${e}"
+  }
 
   /** Generate a valid `doctypedecl`.
     *
@@ -514,7 +560,27 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-doctypedecl]]
     */
-  lazy val xmlDoctypedeclGen: Gen[String] = ???
+  lazy val xmlDoctypedeclGen: Gen[String] = recursiveStep{
+    val subGen0: Gen[String] =
+      for {
+        s <- xmlWhiteSpaceGen
+        e <- xmlExternalIDGen
+      } yield s"${s}${e}"
+
+    val subGen1: Gen[String] =
+      for {
+        i <- xmlIntSubsetGen
+        s <- xmlMaybeWhiteSpaceGen
+      } yield s"[${i}]${s}"
+
+    for {
+      s0 <- xmlWhiteSpaceGen
+      n <- xmlNameGen
+      sub0 <- Gen.oneOf(Gen.const(""), subGen0)
+      s1 <- xmlMaybeWhiteSpaceGen
+      sub1 <- Gen.oneOf(Gen.const(""), subGen1)
+    } yield s"<!DOCTYPE${s0}${n}${sub0}${s1}${sub1}>"
+  }
 
   /** Generate a valid `DeclSep`.
     *
@@ -522,11 +588,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-DeclSep]]
     */
-  lazy val xmlDeclSepGen: Gen[String] =
+  lazy val xmlDeclSepGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       xmlPEReferenceGen,
       xmlWhiteSpaceGen
     )
+  )
 
   /** Generate a valid `intSubset`.
     *
@@ -534,13 +601,14 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-intSubset]]
     */
-  lazy val xmlIntSubsetGen: Gen[String] =
+  lazy val xmlIntSubsetGen: Gen[String] = recursiveStep(
     Gen.listOf(
       Gen.oneOf(
         xmlMarkupDeclGen,
         xmlDeclSepGen
       )
     ).map(_.mkString)
+  )
 
   /** Generate a valid `markupdecl`.
     *
@@ -549,7 +617,16 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-markupdecl]]
     */
-  lazy val xmlMarkupDeclGen: Gen[String] = ???
+  lazy val xmlMarkupDeclGen: Gen[String] = recursiveStep(
+    Gen.oneOf(
+      xmlElementDeclGen,
+      xmlAttlistDeclGen,
+      xmlEntityDeclGen,
+      xmlNotationDeclGen,
+      xmlPIGen,
+      xmlCommentGen
+    )
+  )
 
   /** Generate a valid `extSubset`.
     *
@@ -557,7 +634,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-extSubset]]
     */
-  lazy val xmlExtSubsetGen: Gen[String] = ???
+  lazy val xmlExtSubsetGen: Gen[String] = recursiveStep(
+    for {
+      t <- Gen.oneOf(Gen.const(""), xmlTextDeclGen)
+      e <- xmlExtSubsetGen
+    } yield s"${t}${e}"
+  )
 
   /** Generate a valid `extSubsetDecl`.
     *
@@ -565,7 +647,15 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-extSubsetDecl]]
     */
-  lazy val xmlExtSubsetDeclGen: Gen[String] = ???
+  lazy val xmlExtSubsetDeclGen: Gen[String] = recursiveStep(
+    Gen.listOf(
+      Gen.oneOf(
+        xmlMarkupDeclGen,
+        xmlConditionalSectGen,
+        xmlDeclSepGen
+      )
+    ).map(_.mkString)
+  )
 
   /** Generate a valid `SDDecl`.
     *
@@ -573,7 +663,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-SDDecl]]
     */
-  lazy val xmlSDDeclGen: Gen[String] = {
+  lazy val xmlSDDeclGen: Gen[String] = recursiveStep{
     val yesNoGen: Gen[String] =
       Gen.oneOf(
         Gen.const("yes"),
@@ -598,7 +688,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-element]]
     */
-  lazy val xmlElementGen: Gen[String] =
+  lazy val xmlElementGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       xmlEmptyElemTagGen,
       for {
@@ -607,6 +697,7 @@ trait Generators {
         etag <- xmlETagGen
       } yield s"${stag}${content}${etag}"
     )
+  )
 
   /** Generate a valid `STag`.
     *
@@ -614,7 +705,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-STag]]
     */
-  lazy val xmlSTagGen: Gen[String] = {
+  lazy val xmlSTagGen: Gen[String] = recursiveStep{
     val internalGen: Gen[String] =
       Gen.listOf(
         for {
@@ -635,12 +726,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Attribute]]
     */
-  lazy val xmlAttributeGen: Gen[String] =
+  lazy val xmlAttributeGen: Gen[String] = recursiveStep(
     for {
       name <- xmlNameGen
       eq <- xmlEqGen
       attValue <- xmlAttValueGen
     } yield s"${name}${eq}${attValue}"
+  )
 
   /** Generate a valid `ETag`.
     *
@@ -648,11 +740,12 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-ETag]]
     */
-  lazy val xmlETagGen: Gen[String] =
+  lazy val xmlETagGen: Gen[String] = recursiveStep(
     for {
       name <- xmlNameGen
       s <- Gen.oneOf(xmlWhiteSpaceGen, "")
     } yield s"</${name}${s}>"
+  )
 
   /** Generate a valid `content`.
     *
@@ -660,7 +753,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-content]]
     */
-  lazy val xmlContentGen: Gen[String] = {
+  lazy val xmlContentGen: Gen[String] = recursiveStep{
     val charDataGen: Gen[String] = Gen.oneOf(xmlCharDataGen, Gen.const(""))
     val preambleGen: Gen[String] = Gen.oneOf(
       xmlElementGen,
@@ -689,7 +782,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-EmptyElemTag]]
     */
-  lazy val xmlEmptyElemTagGen: Gen[String] = {
+  lazy val xmlEmptyElemTagGen: Gen[String] = recursiveStep{
     val internalGen: Gen[String] =
       Gen.listOf(
         for {
@@ -710,7 +803,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-elementdecl]]
     */
-  lazy val xmlElementDeclGen: Gen[String] =
+  lazy val xmlElementDeclGen: Gen[String] = recursiveStep(
     for {
       s0 <- xmlWhiteSpaceGen
       name <- xmlNameGen
@@ -718,6 +811,7 @@ trait Generators {
       contentspec <- xmlContentGen
       s2 <- Gen.oneOf(Gen.const(""), xmlWhiteSpaceGen)
     } yield s"<!ELEMENT${s0}${name}${s1}${contentspec}${s2}>"
+  )
 
   /** Generate a valid `contentspec`.
     *
@@ -725,13 +819,14 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-contentspec]]
     */
-  lazy val xmlContentSpecGen: Gen[String] =
+  lazy val xmlContentSpecGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       Gen.const("EMPTY"),
       Gen.const("ANY"),
       xmlMixedGen,
       xmlChildrenGen
     )
+  )
 
   /** Generate a valid `children`.
     *
@@ -739,7 +834,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-children]]
     */
-  lazy val xmlChildrenGen: Gen[String] = {
+  lazy val xmlChildrenGen: Gen[String] = recursiveStep{
     val preamble: Gen[String] =
       Gen.oneOf(
         xmlChoiceGen,
@@ -762,7 +857,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-cp]]
     */
-  lazy val xmlCpGen: Gen[String] = {
+  lazy val xmlCpGen: Gen[String] = recursiveStep{
     val preamble: Gen[String] = Gen.oneOf( // (Name | choice | seq)
       xmlNameGen,
       xmlChoiceGen,
@@ -785,7 +880,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-choice]]
     */
-  lazy val xmlChoiceGen: Gen[String] = {
+  lazy val xmlChoiceGen: Gen[String] = recursiveStep{
     val sGen: Gen[String] = Gen.oneOf(xmlWhiteSpaceGen, Gen.const(""))
     val internalGen: Gen[String] = // ( S? '|' S? cp )+
       Gen.nonEmptyListOf(
@@ -809,7 +904,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-seq]]
     */
-  lazy val xmlSeqGen: Gen[String] = {
+  lazy val xmlSeqGen: Gen[String] = recursiveStep{
     val sGen: Gen[String] = Gen.oneOf(xmlWhiteSpaceGen, Gen.const(""))
     val internalGen: Gen[String] = // ( S? '|' S? cp )*
       Gen.listOf(
@@ -833,7 +928,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Mixed]]
     */
-  lazy val xmlMixedGen: Gen[String] = {
+  lazy val xmlMixedGen: Gen[String] = recursiveStep{
     val sGen: Gen[String] = Gen.oneOf(Gen.const(""), xmlWhiteSpaceGen)
     val firstGen: Gen[String] = { // '(' S? '#PCDATA' (S? '|' S? Name)* S? ')*'
       val internalGen: Gen[String] = // (S? '|' S? Name)*
@@ -864,13 +959,14 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-AttlistDecl]]
     */
-  lazy val xmlAttlistDeclGen: Gen[String] =
+  lazy val xmlAttlistDeclGen: Gen[String] = recursiveStep(
     for {
       s0 <- xmlWhiteSpaceGen
       name <- xmlNameGen
       attDefs <- Gen.listOf(xmlAttDefGen).map(_.mkString)
       s1 <- Gen.oneOf(Gen.const(""), xmlWhiteSpaceGen)
     } yield s"<!ATTLIST${s0}${name}${attDefs}${s1}>"
+  )
 
   /** Generate a valid `AttDef`.
     *
@@ -878,7 +974,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-AttDef]]
     */
-  lazy val xmlAttDefGen: Gen[String] =
+  lazy val xmlAttDefGen: Gen[String] = recursiveStep(
     for {
       s0 <- xmlWhiteSpaceGen
       name <- xmlNameGen
@@ -887,6 +983,7 @@ trait Generators {
       s2 <- xmlWhiteSpaceGen
       defaultDecl <- xmlDefaultDeclGen
     } yield s"${s0}${name}${s1}${attType}${s2}${defaultDecl}"
+  )
 
   /** Generate a valid `AttType`.
     *
@@ -895,7 +992,9 @@ trait Generators {
     * @see [[https://www.w3.org/TR/xml11//#NT-AttType]]
     */
   lazy val xmlAttTypeGen: Gen[String] =
-    Gen.oneOf(xmlStringTypeGen, xmlTokenizedTypeGen, xmlEnumeratedTypeGen)
+    recursiveStep(
+      Gen.oneOf(xmlStringTypeGen, xmlTokenizedTypeGen, xmlEnumeratedTypeGen)
+    )
 
 
   /** Generate a valid `StringType`.
@@ -926,7 +1025,7 @@ trait Generators {
     * @see [[https://www.w3.org/TR/xml11//#NT-EnumeratedType]]
     */
   lazy val xmlEnumeratedTypeGen: Gen[String] =
-    Gen.oneOf(xmlNotationType, xmlEnumerationGen)
+    recursiveStep(Gen.oneOf(xmlNotationType, xmlEnumerationGen))
 
   /** Generate a valid `NotationType`.
     *
@@ -934,7 +1033,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-NotationType]]
     */
-  lazy val xmlNotationType: Gen[String] = {
+  lazy val xmlNotationType: Gen[String] = recursiveStep{
     val sGen: Gen[String] = Gen.oneOf(Gen.const(""), xmlWhiteSpaceGen)
     val internalGen: Gen[String] =
       Gen.listOf(
@@ -959,7 +1058,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Enumeration]]
     */
-  lazy val xmlEnumerationGen: Gen[String] = {
+  lazy val xmlEnumerationGen: Gen[String] = recursiveStep{
     val sGen: Gen[String] = Gen.oneOf(Gen.const(""), xmlWhiteSpaceGen)
     val internalGen: Gen[String] =
       Gen.listOf(
@@ -983,7 +1082,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-DefaultDecl]]
     */
-  lazy val xmlDefaultDeclGen: Gen[String] =
+  lazy val xmlDefaultDeclGen: Gen[String] = recursiveStep(
     Gen.oneOf(
       Gen.const("#REQUIRED"),
       Gen.const("#IMPLIED"),
@@ -994,6 +1093,7 @@ trait Generators {
         ).map(prefix => s"${prefix}${attValue}")
       )
     )
+  )
 
   /** Generate a valid `conditionalSect`.
     *
@@ -1002,7 +1102,7 @@ trait Generators {
     * @see [[https://www.w3.org/TR/xml11//#NT-conditionalSect]]
     */
   lazy val xmlConditionalSectGen: Gen[String] =
-    Gen.oneOf(xmlIncludeSectGen, xmlIgnoreSectGen)
+    recursiveStep(Gen.oneOf(xmlIncludeSectGen, xmlIgnoreSectGen))
 
   /** Generate a valid `includeSect`.
     *
@@ -1010,7 +1110,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-includeSect]]
     */
-  lazy val xmlIncludeSectGen: Gen[String] = ???
+  lazy val xmlIncludeSectGen: Gen[String] = recursiveStep(
+    for {
+      s0 <- xmlMaybeWhiteSpaceGen
+      s1 <- xmlMaybeWhiteSpaceGen
+      e <- xmlExtSubsetDeclGen
+    } yield s"<![${s0}INCLUDE${s1}[${e}]]>"
+  )
 
   /** Generate a valid `ignoreSect`.
     *
@@ -1018,12 +1124,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-ignoreSect]]
     */
-  lazy val xmlIgnoreSectGen: Gen[String] =
+  lazy val xmlIgnoreSectGen: Gen[String] = recursiveStep(
     for {
       s0 <- xmlMaybeWhiteSpaceGen
       s1 <- xmlMaybeWhiteSpaceGen
       isc <- Gen.listOf(xmlIgnoreSectContentsGen)
     } yield s"<![${s0}IGNORE${s1}[${isc.mkString}]]>"
+  )
 
   /** Generate a valid `ignoreSectContents`.
     *
@@ -1031,7 +1138,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-ignoreSectContents]]
     */
-  lazy val xmlIgnoreSectContentsGen: Gen[String] = {
+  lazy val xmlIgnoreSectContentsGen: Gen[String] = recursiveStep{
     val internalGen: Gen[String] =
       for {
         isc <- xmlIgnoreSectContentsGen
@@ -1053,10 +1160,11 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-Ignore]]
     */
-  lazy val xmlIgnoreGen: Gen[String] =
-    Gen.listOf(xmlCharGen).map(_.mkString).filterNot(value =>
-      value.contains("<![") || value.contains("]]>")
+  lazy val xmlIgnoreGen: Gen[String] = recursiveStep(
+    Gen.listOf(xmlCharGen).map(_.mkString).map(value =>
+      value.replace("<![", "abc").replace("]]>", "abc")
     )
+  )
 
   /** Generate a valid `EntityDecl`.
     *
@@ -1064,7 +1172,8 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-EntityDecl]]
     */
-  lazy val xmlEntityDeclGen: Gen[String] = ???
+  lazy val xmlEntityDeclGen: Gen[String] =
+    recursiveStep(Gen.oneOf(xmlGEDeclGen, xmlPEDeclGen))
 
   /** Generate a valid `GEDecl`.
     *
@@ -1072,7 +1181,15 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-GEDecl]]
     */
-  lazy val xmlGEDeclGen: Gen[String] = ???
+  lazy val xmlGEDeclGen: Gen[String] = recursiveStep(
+    for {
+      s0 <- xmlWhiteSpaceGen
+      n <- xmlNameGen
+      s1 <- xmlWhiteSpaceGen
+      e <- xmlEntityDefGen
+      s2 <- xmlMaybeWhiteSpaceGen
+    } yield s"<!ENTITY${s0}${n}${s1}${e}${s2}>"
+  )
 
   /** Generate a valid `PEDecl`.
     *
@@ -1080,7 +1197,16 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-PEDecl]]
     */
-  lazy val xmlPEDeclGen: Gen[String] = ???
+  lazy val xmlPEDeclGen: Gen[String] = recursiveStep(
+    for {
+      s0 <- xmlWhiteSpaceGen
+      s1 <- xmlWhiteSpaceGen
+      n <- xmlNameGen
+      s2 <- xmlWhiteSpaceGen
+      p <- xmlPEDefGen
+      s3 <- xmlWhiteSpaceGen
+    } yield s"<!ENTITY${s0}%${s1}${n}${s2}${p}${s3}>"
+  )
 
   /** Generate a valid `EntityDef`.
     *
@@ -1088,7 +1214,18 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-EntityDef]]
     */
-  lazy val xmlEntityDefGen: Gen[String] = ???
+  lazy val xmlEntityDefGen: Gen[String] = recursiveStep{
+    val subGen0: Gen[String] =
+      for {
+        e <- xmlExternalIDGen
+        n <- Gen.oneOf(Gen.const(""), xmlNDataDeclGen)
+      } yield s"${e}${n}"
+
+    Gen.oneOf(
+      xmlEntityValueGen,
+      subGen0
+    )
+  }
 
   /** Generate a valid `PEDef`.
     *
@@ -1096,7 +1233,8 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-PEDef]]
     */
-  lazy val xmlPEDefGen: Gen[String] = ???
+  lazy val xmlPEDefGen: Gen[String] =
+    recursiveStep(Gen.oneOf(xmlEntityValueGen, xmlExternalIDGen))
 
   /** Generate a valid `ExternalID`.
     *
@@ -1104,7 +1242,7 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-ExternalID]]
     */
-  lazy val xmlExternalIdGen: Gen[String] = {
+  lazy val xmlExternalIDGen: Gen[String] = recursiveStep{
     val firstGen: Gen[String] =
       for {
         s <- xmlWhiteSpaceGen
@@ -1117,6 +1255,7 @@ trait Generators {
         s1 <- xmlWhiteSpaceGen
         sl <- xmlSystemLiteralGen
       } yield s"PUBLIC${s0}${pl}${s1}${sl}"
+    Gen.oneOf(firstGen, secondGen)
   }
 
   /** Generate a valid `NDataDecl`.
@@ -1125,12 +1264,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-NDataDecl]]
     */
-  lazy val xmlNDataDeclGen: Gen[String] =
+  lazy val xmlNDataDeclGen: Gen[String] = recursiveStep(
     for {
       s0 <- xmlWhiteSpaceGen
       s1 <- xmlWhiteSpaceGen
       n <- xmlNameGen
     } yield s"${s0}NDATA${s1}${n}"
+  )
 
   /** Generate a valid `TextDecl`.
     *
@@ -1138,7 +1278,13 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-TextDecl]]
     */
-  lazy val xmlTextDeclGen: Gen[String] = ???
+  lazy val xmlTextDeclGen: Gen[String] = recursiveStep(
+    for {
+      v <- Gen.oneOf(Gen.const(""), xmlVersionInfoGen)
+      e <- xmlEncodingDeclGen
+      s <- xmlMaybeWhiteSpaceGen
+    } yield s"<?xml${v}${e}${s}?>"
+  )
 
   /** Generate a valid `extParsedEnt`.
     *
@@ -1147,11 +1293,17 @@ trait Generators {
     * @see [[https://www.w3.org/TR/xml11//#NT-extParsedEnt]]
     */
   lazy val xmlExtParsedEntGen: Gen[String] =
-    (for {
+    recursiveStep(for {
       textDecl <- Gen.oneOf(Gen.const(""), xmlTextDeclGen)
       content <- xmlContentGen
-    } yield s"${textDecl}${content}").filter(value =>
-      value.toSet.intersect(xmlRestrictedChars).isEmpty
+    } yield s"${textDecl}${content}").map(value =>
+      value.map(c =>
+        if (xmlRestrictedChars.contains(c)) {
+          "a"
+        } else {
+          c
+        }
+      ).mkString
     )
 
   /** Generate a valid `EncodingDecl`.
@@ -1160,7 +1312,19 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-EncodingDecl]]
     */
-  lazy val xmlEncodingDeclGen: Gen[String] = ???
+  lazy val xmlEncodingDeclGen: Gen[String] = recursiveStep{
+    val subGen0: Gen[String] =
+      Gen.oneOf(
+        xmlEncNameGen.map(value => s""""${value}""""),
+        xmlEncNameGen.map(value => s"""'${value}'""")
+      )
+
+    for {
+      s <- xmlWhiteSpaceGen
+      e <- xmlEqGen
+      sub0 <- subGen0
+    } yield s"${s}encoding${e}${sub0}"
+  }
 
   /** Generate a valid `EncName`.
     *
@@ -1168,21 +1332,74 @@ trait Generators {
     *
     * @see [[https://www.w3.org/TR/xml11//#NT-EncName]]
     */
-  lazy val xmlEncNameGen: Gen[String] = {
-    lazy val epilogue: Gen[String] =
-      Gen.oneOf(
-        evenDistribution(
-          ('A'.toInt, 'Z'.toInt),
-          List(
-            ('a'.toInt, 'z'.toInt),
-            ('0'.toInt, '9'.toInt),
-            ('.'.toInt, '.'.toInt),
-            ('_'.toInt, '_'.toInt)
-          )
-        ).map(_.toChar),
-        Gen.const('-')
-      )
+  lazy val xmlEncNameGen: Gen[String] = recursiveStep(
+    Gen.listOf(
+      evenDistribution(
+        ('A'.toInt, 'Z'.toInt),
+        List(
+          ('a'.toInt, 'z'.toInt),
+          ('0'.toInt, '9'.toInt),
+          ('.'.toInt, '.'.toInt),
+          ('_'.toInt, '_'.toInt),
+          ('-'.toInt, '-'.toInt)
+        )
+      ).map(_.toChar)
+    ).map(_.mkString)
+  )
+
+  /** Generate a valid `NotationDecl`.
+    *
+    * NotationDecl ::= '<!NOTATION' S Name S (ExternalID | PublicID) S? '>'
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-NotationDecl]]
+    */
+  lazy val xmlNotationDeclGen: Gen[String] = recursiveStep{
+    val subGen0: Gen[String] =
+      Gen.oneOf(xmlExternalIDGen, xmlPublicIDGen)
+
+    for {
+      s0 <- xmlWhiteSpaceGen
+      n <- xmlNameGen
+      s1 <- xmlWhiteSpaceGen
+      sub0 <- subGen0
+      s2 <- xmlMaybeWhiteSpaceGen
+    } yield s"<!NOTATION${s0}${n}${s1}${sub0}${s2}>"
   }
+
+  /** Generate a valid `PublicID`.
+    *
+    * PublicID ::= 'PUBLIC' S PubidLiteral
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-PublicID]]
+    */
+  lazy val xmlPublicIDGen: Gen[String] = recursiveStep(
+    for {
+      s <- xmlWhiteSpaceGen
+      p <- xmlPubidLiteralGen
+    } yield s"PUBLIC${s}${p}"
+  )
+
+  /** Generate a valid `document`.
+    *
+    * document ::= ( prolog element Misc* ) - ( Char* RestrictedChar Char* )
+    *
+    * @see [[https://www.w3.org/TR/xml11//#NT-document]]
+    */
+  lazy val xmlDocumentGen: Gen[String] = recursiveStep(
+    (for {
+      p <- xmlPrologGen
+      e <- xmlElementGen
+      m <- Gen.listOf(xmlMiscGen).map(_.mkString)
+    } yield s"${p}${e}${m}").map(value =>
+      value.map(c =>
+        if (xmlRestrictedChars.contains(c)) {
+          "a"
+        } else {
+          c
+        }
+      ).mkString
+    )
+  )
 }
 
 object Generators extends Generators
